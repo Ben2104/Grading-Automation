@@ -7,10 +7,11 @@ import codepost
 import dotenv
 dotenv.load_dotenv()
 # --- CONFIG: update these if needed ---
-COURSE_ID = 5290
-ASSIGNMENT_ID = 37037
+
+COURSE_ID = 5290 # FIXME depends on your course
+ASSIGNMENT_ID = 37037 # FIXME depends on your assignment
 OUTDIR = "./downloads"   # base folder for saving files
-TARGET_FILENAME = "pa3.py"  # Only download this file
+TARGET_FILENAME = "pa3.py"  # Only download this file 
 # --------------------------------------
 def get_api_key():
     key = os.getenv("CODEPOST_API_KEY", "").strip()
