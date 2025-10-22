@@ -1,0 +1,2 @@
+codepost==0.3.2
+python-dotenv
