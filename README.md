@@ -1,4 +1,4 @@
-# Shape-Matching-Game (CodePost script)
+# Grading Automation
 
 This small script lists your available CodePost courses. It requires a CodePost API key.
 
