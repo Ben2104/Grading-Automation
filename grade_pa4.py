@@ -161,20 +161,34 @@ class ConsoleLogger:
         self.log_file.write(log_message + '\n')
         self.log_file.flush()
 
-    def log_traceback(self, student: str, test_name: str, message: str, error: str = "", stderr: str = ""):
-        """Log detailed traceback information for failed tests."""
-        self.log(f"  ✗ {test_name} FAILED for {student}")
-        self.log(f"    MESSAGE: {message[:300]}")
-        if error:
-            self.log(f"    ERROR TRACEBACK:")
-            for line in error.split('\n')[:20]:
+    def log_test_details(self, student: str, test_name: str, ok: bool, message: str, error: str = "", stderr: str = ""):
+        """Log detailed test information."""
+        status = "✓ PASSED" if ok else "✗ FAILED"
+        self.log(f"  {status} - {test_name}")
+        
+        # Log the full test message (input, output, expected)
+        if message:
+            lines = message.split('\n')
+            for line in lines[:50]:  # Show first 50 lines of message
+                self.log(f"    │ {line}")
+        
+        # Log error details if present
+        if not ok and error:
+            self.log(f"    ├─ ERROR DETAILS:")
+            error_lines = error.split('\n')
+            for line in error_lines[:30]:  # Show first 30 lines of error
                 if line.strip():
-                    self.log(f"      {line}")
-        if stderr:
-            self.log(f"    STDERR:")
-            for line in stderr.split('\n')[:10]:
+                    self.log(f"    │   {line}")
+        
+        # Log stderr if present
+        if not ok and stderr:
+            self.log(f"    ├─ STDERR:")
+            stderr_lines = stderr.split('\n')
+            for line in stderr_lines[:20]:  # Show first 20 lines of stderr
                 if line.strip():
-                    self.log(f"      {line}")
+                    self.log(f"    │   {line}")
+        
+        self.log(f"    └─ End of {test_name}")
 
     def close(self):
         """Close the log file."""
@@ -198,6 +212,7 @@ def main():
     ap.add_argument("--log-file", default=DEFAULT_LOG_FILE)
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     ap.add_argument("--python-bin", default=sys.executable)
+    ap.add_argument("--verbose", action="store_true", help="Show detailed test output in console")
     args = ap.parse_args()
 
     submissions_dir = pathlib.Path(args.submissions_dir)
@@ -227,6 +242,10 @@ def main():
         raise SystemExit(f"No test_*.py found in {tests_dir.resolve()}")
 
     logger.log(f"Found {len(tests)} test(s): {[t.name for t in tests]}")
+    logger.log(f"Submissions directory: {submissions_dir.resolve()}")
+    logger.log(f"Tests directory: {tests_dir.resolve()}")
+    logger.log(f"Timeout: {args.timeout}s")
+    logger.log("")
 
     results_csv.parent.mkdir(parents=True, exist_ok=True)
     summary_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -241,9 +260,16 @@ def main():
             rw = csv.writer(rf)
             rw.writerow(["student_email(s)", "test_file", "passed", "message"])
 
-            for student_dir in sorted([p for p in submissions_dir.iterdir() if p.is_dir()]):
+            student_dirs = sorted([p for p in submissions_dir.iterdir() if p.is_dir()])
+            logger.log(f"Processing {len(student_dirs)} student submission(s)...")
+            logger.log("=" * 80)
+
+            for student_idx, student_dir in enumerate(student_dirs, 1):
                 student = student_dir.name
                 summary.setdefault(student, {"total": 0, "passed": 0, "failed": 0, "missing_pa4": 0})
+
+                logger.log(f"\n[{student_idx}/{len(student_dirs)}] Processing: {student}")
+                logger.log("-" * 80)
 
                 pa4_path = None
                 direct = student_dir / "pa4.py"
@@ -263,12 +289,12 @@ def main():
                         summary[student]["total"] += 1
                         summary[student]["failed"] += 1
                     summary[student]["missing_pa4"] = 1
-                    logger.log(f"SKIP: {student}: pa4.py not found")
+                    logger.log(f"  ⚠️  SKIPPED: pa4.py not found")
                     continue
 
-                logger.log(f"RUN: {student} -> {pa4_path.relative_to(student_dir)}")
+                logger.log(f"  📁 Found: {pa4_path.relative_to(student_dir)}")
 
-                for idx, tfile in enumerate(tests):
+                for idx, tfile in enumerate(tests, 1):
                     seed = 1337 + idx
                     cmd = [
                         args.python_bin,
@@ -310,20 +336,26 @@ def main():
                         summary[student]["total"] += 1
                         if ok:
                             summary[student]["passed"] += 1
-                            logger.log(f"  ✓ {tfile.name}")
                         else:
                             summary[student]["failed"] += 1
-                            if error or err:
-                                logger.log_traceback(student, tfile.name, message, error, err)
-                            else:
-                                logger.log(f"  ✗ {tfile.name}: {message[:100]}")
+
+                        # Log detailed test information
+                        logger.log_test_details(student, tfile.name, ok, message, error, err)
 
                     except subprocess.TimeoutExpired:
-                        rw.writerow([student, tfile.name, 0, f"Test timed out after {args.timeout} seconds"])
+                        timeout_msg = f"Test timed out after {args.timeout} seconds"
+                        rw.writerow([student, tfile.name, 0, timeout_msg])
                         summary[student]["total"] += 1
                         summary[student]["failed"] += 1
-                        logger.log(f"  ✗ {tfile.name}: TIMEOUT")
+                        logger.log(f"  ✗ FAILED - {tfile.name}")
+                        logger.log(f"    │ {timeout_msg}")
+                        logger.log(f"    └─ End of {tfile.name}")
 
+                # Log student summary
+                s = summary[student]
+                logger.log(f"\n  📊 Student Summary: {s['passed']}/{s['total']} passed ({s['passed']/s['total']*100:.1f}%)")
+
+    # Write summary CSV
     with open(summary_csv, "w", newline="", encoding="utf-8") as sf:
         sw = csv.writer(sf)
         sw.writerow(["student_email(s)", "total_tests", "passed", "failed", "percent_passed", "missing_pa4"])
@@ -334,6 +366,7 @@ def main():
             pct = (passed / total * 100.0) if total else 0.0
             sw.writerow([student, total, passed, failed, f"{pct:.2f}", s["missing_pa4"]])
 
+    logger.log("\n" + "=" * 80)
     logger.log(f"✅ Results:  {results_csv.resolve()}")
     logger.log(f"✅ Summary:  {summary_csv.resolve()}")
     logger.log(f"✅ Log file: {log_file.resolve()}")
